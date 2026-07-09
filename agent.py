@@ -5,13 +5,32 @@ Responsabilidad única de este archivo: construir el objeto `agent` ya
 listo para usarse (con su modelo y sus tools conectadas). main.py solo
 necesita importar `agent` de aquí y llamar a `agent.run(...)`.
 
-
+Si algún día cambias de modelo (por ejemplo, de Ollama local a un modelo
+en la nube vía LiteLLM), este es el único archivo que necesitas tocar.
 """
 
+import os
+
+# LiteLLM tiene su propio logger interno ("LiteLLM"), separado del logging
+# de nuestra app (logging_config.py) — configurar el logger raíz de Python
+# no lo silencia. La única forma confiable, según la documentación oficial
+# de LiteLLM, es esta variable de entorno, y debe asignarse ANTES de que
+# litellm se importe (por eso va antes del import de smolagents).
+os.environ.setdefault("LITELLM_LOG", "ERROR")
+
 from smolagents import CodeAgent, LiteLLMModel
+import litellm
+
+# Respaldo adicional a LITELLM_LOG (documentado en la guía de "Best
+# Practices" de LiteLLM): apaga explícitamente sus banderas de debug,
+# por si alguna versión de la librería no respeta solo la variable
+# de entorno.
+litellm.suppress_debug_info = True
+litellm.set_verbose = False
 
 from tools import (
-    spotify_search,
+    spotify_search_songs,
+    spotify_search_artists,
     spotify_recently_played,
     spotify_create_playlist_from_search,
 )
@@ -35,7 +54,8 @@ model = LiteLLMModel(
 agent = CodeAgent(
     model=model,
     tools=[
-        spotify_search,
+        spotify_search_songs,
+        spotify_search_artists,
         spotify_recently_played,
         spotify_create_playlist_from_search,
     ],

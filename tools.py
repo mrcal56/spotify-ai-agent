@@ -11,12 +11,15 @@ entendible en español — nunca deja que una excepción se propague sin
 control, porque eso tumbaría el proceso completo del agente.
 """
 
+import logging
 from typing import List
 
 from smolagents import tool
 from spotipy.exceptions import SpotifyException
 
 from spotify_client import get_spotify_client
+
+logger = logging.getLogger(__name__)
 
 
 def format_track(track: dict) -> str:
@@ -65,79 +68,140 @@ def _handle_spotify_error(error: SpotifyException) -> str:
 
 
 @tool
-def spotify_search(query: str, limit: int) -> str:
-    """Searches Spotify for songs and artists using the Spotify Web API.
+def spotify_search_songs(query: str, limit: int) -> str:
+    """Searches Spotify ONLY for songs (tracks) using the Spotify Web API.
 
     Use this tool when the user asks to:
-    - search songs by artist name
+    - search songs by artist name (e.g. "3 canciones de Bad Bunny")
     - search songs by song title
-    - search artists
-    - get album, artist and Spotify links
     - find tracks related to a music query
+    - get song names, albums, popularity or Spotify links for songs
+
+    Do NOT use this tool when the user asks about an artist's profile,
+    genres, or artist popularity — use spotify_search_artists instead.
 
     Important usage rules:
     - This tool already returns a complete formatted text report.
     - This tool returns a string, not a list and not a dictionary.
     - Do not iterate over the result using a for loop.
-    - Do not try to access result['title'], result['album'], result['artist'] or result['link'].
+    - Do not try to access result['title'], result['album'] or result['link'].
     - Do not use web_search, google_search, browser_search or any other search function.
     - After calling this tool, pass the returned text directly to final_answer.
     - Correct usage example:
-      result = spotify_search(query="21 Savage", limit=5)
+      result = spotify_search_songs(query="21 Savage", limit=5)
       final_answer(result)
 
     Args:
         query: The Spotify search query. It can be an artist, song, album or keyword. Examples: '21 Savage', 'Bad Bunny', 'Linkin Park Numb', 'corridos tumbados'.
-        limit: Maximum number of results to return. Use an integer from 1 to 10. If the user asks for 5 songs, use 5.
+        limit: Maximum number of songs to return. Use an integer from 1 to 10. If the user asks for 3 songs, use 3.
     """
+    logger.info("spotify_search_songs llamada: query=%r, limit=%s", query, limit)
+
     try:
         sp = get_spotify_client()
         limit = max(1, min(limit, 10))
 
         results = sp.search(
             q=query,
-            type="track,artist",
+            type="track",
             limit=limit,
             market="MX",
         )
 
         tracks = results.get("tracks", {}).get("items", [])
-        artists = results.get("artists", {}).get("items", [])
 
-        output = [f"Resultados de Spotify para: {query}\n"]
+        if not tracks:
+            return f"No encontré canciones en Spotify para: {query}"
 
-        if tracks:
-            output.append("CANCIONES ENCONTRADAS:")
-            for index, track in enumerate(tracks, start=1):
-                output.append(f"\n[{index}]\n{format_track(track)}")
-
-        if artists:
-            output.append("\nARTISTAS ENCONTRADOS:")
-            for index, artist in enumerate(artists, start=1):
-                name = artist.get("name", "Unknown artist")
-                genres = ", ".join(artist.get("genres", [])) or "Sin géneros disponibles"
-                popularity = artist.get("popularity", "N/A")
-                url = artist.get("external_urls", {}).get("spotify", "No URL")
-
-                output.append(
-                    f"\n[{index}]\n"
-                    f"Artista: {name}\n"
-                    f"Géneros: {genres}\n"
-                    f"Popularidad: {popularity}\n"
-                    f"Spotify: {url}"
-                )
-
-        if not tracks and not artists:
-            return f"No encontré resultados en Spotify para: {query}"
+        output = [f"Canciones encontradas para: {query}\n"]
+        for index, track in enumerate(tracks, start=1):
+            output.append(f"\n[{index}]\n{format_track(track)}")
 
         return "\n".join(output)
 
     except RuntimeError as error:
+        logger.error("Error de configuración en spotify_search_songs: %s", error)
         return f"Error de configuración: {error}"
     except SpotifyException as error:
+        logger.error("SpotifyException en spotify_search_songs: %s", error, exc_info=True)
         return _handle_spotify_error(error)
     except Exception as error:
-        return f"Ocurrió un error inesperado al buscar en Spotify: {error}"
+        logger.error("Error inesperado en spotify_search_songs: %s", error, exc_info=True)
+        return f"Ocurrió un error inesperado al buscar canciones en Spotify: {error}"
+
+
+@tool
+def spotify_search_artists(query: str, limit: int) -> str:
+    """Searches Spotify ONLY for artists using the Spotify Web API.
+
+    Use this tool when the user asks to:
+    - search for an artist's profile
+    - get an artist's genres or popularity
+    - get an artist's Spotify link
+    - find artists related to a name or genre keyword
+
+    Do NOT use this tool when the user asks for songs or tracks —
+    use spotify_search_songs instead.
+
+    Important usage rules:
+    - This tool already returns a complete formatted text report.
+    - This tool returns a string, not a list and not a dictionary.
+    - Do not iterate over the result using a for loop.
+    - Do not try to access result['artist'] or result['genres'].
+    - Do not use web_search, google_search, browser_search or any other search function.
+    - After calling this tool, pass the returned text directly to final_answer.
+    - Correct usage example:
+      result = spotify_search_artists(query="21 Savage", limit=5)
+      final_answer(result)
+
+    Args:
+        query: The Spotify search query. It can be an artist name or genre keyword. Examples: '21 Savage', 'Bad Bunny', 'corridos tumbados'.
+        limit: Maximum number of artists to return. Use an integer from 1 to 10. If the user asks for 3 artists, use 3.
+    """
+    logger.info("spotify_search_artists llamada: query=%r, limit=%s", query, limit)
+
+    try:
+        sp = get_spotify_client()
+        limit = max(1, min(limit, 10))
+
+        results = sp.search(
+            q=query,
+            type="artist",
+            limit=limit,
+            market="MX",
+        )
+
+        artists = results.get("artists", {}).get("items", [])
+
+        if not artists:
+            return f"No encontré artistas en Spotify para: {query}"
+
+        output = [f"Artistas encontrados para: {query}\n"]
+        for index, artist in enumerate(artists, start=1):
+            name = artist.get("name", "Unknown artist")
+            genres = ", ".join(artist.get("genres", [])) or "Sin géneros disponibles"
+            popularity = artist.get("popularity", "N/A")
+            url = artist.get("external_urls", {}).get("spotify", "No URL")
+
+            output.append(
+                f"\n[{index}]\n"
+                f"Artista: {name}\n"
+                f"Géneros: {genres}\n"
+                f"Popularidad: {popularity}\n"
+                f"Spotify: {url}"
+            )
+
+        return "\n".join(output)
+
+    except RuntimeError as error:
+        logger.error("Error de configuración en spotify_search_artists: %s", error)
+        return f"Error de configuración: {error}"
+    except SpotifyException as error:
+        logger.error("SpotifyException en spotify_search_artists: %s", error, exc_info=True)
+        return _handle_spotify_error(error)
+    except Exception as error:
+        logger.error("Error inesperado en spotify_search_artists: %s", error, exc_info=True)
+        return f"Ocurrió un error inesperado al buscar artistas en Spotify: {error}"
 
 
 @tool
@@ -167,6 +231,8 @@ def spotify_recently_played(limit: int) -> str:
     Args:
         limit: Number of recently played tracks to retrieve. Use an integer from 1 to 50. If the user asks for recent songs without specifying a number, use 20.
     """
+    logger.info("spotify_recently_played llamada: limit=%s", limit)
+
     try:
         sp = get_spotify_client()
         limit = max(1, min(limit, 50))
@@ -227,10 +293,13 @@ def spotify_recently_played(limit: int) -> str:
         return "\n".join(output)
 
     except RuntimeError as error:
+        logger.error("Error de configuración en spotify_recently_played: %s", error)
         return f"Error de configuración: {error}"
     except SpotifyException as error:
+        logger.error("SpotifyException en spotify_recently_played: %s", error, exc_info=True)
         return _handle_spotify_error(error)
     except Exception as error:
+        logger.error("Error inesperado en spotify_recently_played: %s", error, exc_info=True)
         return f"Ocurrió un error inesperado al leer tu historial de Spotify: {error}"
 
 
@@ -282,10 +351,22 @@ def spotify_create_playlist_from_search(
         confirm: Safety confirmation. Must be exactly 'SI_CREAR' to create the playlist.
     """
     if confirm != "SI_CREAR":
+        logger.warning(
+            "Intento de crear playlist '%s' sin confirmación válida (confirm=%r)",
+            playlist_name,
+            confirm,
+        )
         return (
             "No se creó ninguna playlist. "
             "Para confirmar la creación, usa confirm='SI_CREAR'."
         )
+
+    logger.info(
+        "Creando playlist '%s' (visibility=%s, tracks_per_query=%s)",
+        playlist_name,
+        visibility,
+        tracks_per_query,
+    )
 
     try:
         sp = get_spotify_client()
@@ -377,11 +458,22 @@ def spotify_create_playlist_from_search(
         )
 
     except RuntimeError as error:
+        logger.error("Error de configuración en spotify_create_playlist_from_search: %s", error)
         return f"Error de configuración: {error}"
     except SpotifyException as error:
+        logger.error(
+            "SpotifyException en spotify_create_playlist_from_search: %s",
+            error,
+            exc_info=True,
+        )
         return (
             "La playlist pudo haberse creado parcialmente antes del error. "
             "Revisa tu cuenta de Spotify. Detalle: " + _handle_spotify_error(error)
         )
     except Exception as error:
+        logger.error(
+            "Error inesperado en spotify_create_playlist_from_search: %s",
+            error,
+            exc_info=True,
+        )
         return f"Ocurrió un error inesperado al crear la playlist: {error}"

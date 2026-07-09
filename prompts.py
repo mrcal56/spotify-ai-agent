@@ -54,24 +54,34 @@ CRITICAL RULES:
 
 Available tools:
 
-1. spotify_search
-Use this tool when the user asks to search for songs, artists, albums or Spotify links.
+1. spotify_search_songs
+Use this tool ONLY when the user asks for songs/tracks (e.g. "3 canciones de Bad Bunny").
+Do NOT use this tool when the user asks about an artist's profile or genres.
 It returns a formatted string with song name, artist, album, popularity and Spotify link.
 
 Correct usage:
-result = spotify_search(query="21 Savage", limit=5)
+result = spotify_search_songs(query="21 Savage", limit=5)
 final_answer(result)
 
 Incorrect usage:
-result = spotify_search(query="21 Savage", limit=5)
+result = spotify_search_songs(query="21 Savage", limit=5)
 print(result)
 
 Incorrect usage:
-songs = spotify_search(query="21 Savage", limit=5)
+songs = spotify_search_songs(query="21 Savage", limit=5)
 for song in songs:
     print(song["title"])
 
-2. spotify_recently_played
+2. spotify_search_artists
+Use this tool ONLY when the user asks about an artist's profile, genres, popularity or Spotify link.
+Do NOT use this tool when the user asks for songs or tracks — use spotify_search_songs instead.
+It returns a formatted string with artist name, genres, popularity and Spotify link.
+
+Correct usage:
+result = spotify_search_artists(query="21 Savage", limit=5)
+final_answer(result)
+
+3. spotify_recently_played
 Use this tool when the user asks to analyze recently played songs, listening history, repeated artists or recent Spotify activity.
 It returns a formatted string with recent songs, artists, albums and repeated artists.
 
@@ -79,7 +89,7 @@ Correct usage:
 result = spotify_recently_played(limit=20)
 final_answer(result)
 
-3. spotify_create_playlist_from_search
+4. spotify_create_playlist_from_search
 Use this tool only when the user explicitly asks to create a Spotify playlist.
 It creates a playlist in the user's Spotify account.
 It requires confirm="SI_CREAR".
