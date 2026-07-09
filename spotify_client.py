@@ -28,17 +28,19 @@ SPOTIFY_SCOPES = (
     "playlist-modify-public"
 )
 
+# Caché a nivel de módulo: guarda la única instancia de spotipy.Spotify
+# ya creada, para no reconstruirla en cada llamada a get_spotify_client().
+# Empieza en None porque todavía no se ha creado ningún cliente.
+_cached_client: spotipy.Spotify | None = None
 
-def get_spotify_client() -> spotipy.Spotify:
-    """Crea y devuelve un cliente autenticado de Spotify.
 
-    Verifica primero que las variables de entorno necesarias existan;
-    si falta alguna, lanza un error claro en vez de dejar que spotipy
-    falle más adelante con un mensaje confuso.
+def _build_spotify_client() -> spotipy.Spotify:
+    """Construye una instancia nueva de spotipy.Spotify desde cero.
 
-    Returns:
-        Una instancia de spotipy.Spotify lista para hacer llamadas
-        a la Web API de Spotify (búsquedas, historial, playlists, etc.).
+    Esta función hace el trabajo "caro": leer variables de entorno,
+    validar que existan, y montar el auth_manager con el token cacheado
+    en disco (.spotify_cache). Solo debe llamarse una vez por proceso;
+    get_spotify_client() es quien decide cuándo llamarla.
 
     Raises:
         RuntimeError: si falta alguna variable de entorno requerida.
@@ -67,3 +69,31 @@ def get_spotify_client() -> spotipy.Spotify:
     )
 
     return spotipy.Spotify(auth_manager=auth_manager)
+
+
+def get_spotify_client() -> spotipy.Spotify:
+    """Devuelve un cliente autenticado de Spotify, reutilizando el mismo.
+
+    La primera vez que se llama, construye el cliente y lo guarda en
+    _cached_client. Las siguientes llamadas devuelven ese mismo objeto
+    en vez de crear uno nuevo — evita releer el .env y el .spotify_cache
+    en cada tool call.
+
+    El refresco automático del access token (que expira cada ~1 hora)
+    NO se ve afectado por este caché: spotipy lo maneja internamente
+    dentro del propio auth_manager en cada petición HTTP, sin importar
+    si el objeto Spotify es nuevo o reutilizado.
+
+    Returns:
+        Una instancia de spotipy.Spotify lista para hacer llamadas
+        a la Web API de Spotify (búsquedas, historial, playlists, etc.).
+
+    Raises:
+        RuntimeError: si falta alguna variable de entorno requerida.
+    """
+    global _cached_client
+
+    if _cached_client is None:
+        _cached_client = _build_spotify_client()
+
+    return _cached_client
