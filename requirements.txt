@@ -1,0 +1,9 @@
+# Cliente oficial para la Web API de Spotify (búsqueda, historial, playlists, OAuth)
+spotipy>=2.24.0
+
+# Carga variables de entorno desde un archivo .env (SPOTIPY_CLIENT_ID, etc.)
+python-dotenv>=1.0.1
+
+# Framework de agentes. El extra [litellm] instala también la librería `litellm`,
+# necesaria porque usamos LiteLLMModel para hablar con Ollama (modelo local).
+smolagents[litellm]>=1.26.0

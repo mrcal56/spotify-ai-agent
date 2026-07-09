@@ -1,0 +1,20 @@
+# --- Secretos y configuración local ---
+.env
+.spotify_cache
+
+# --- Entornos virtuales de Python ---
+venv/
+.venv/
+env/
+
+# --- Cachés y artefactos de Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# --- Editores / SO ---
+.vscode/
+.idea/
+.DS_Store
