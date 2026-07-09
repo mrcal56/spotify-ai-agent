@@ -6,12 +6,15 @@ con @tool que smolagents expone al modelo. Cada tool sabe cómo hablar
 con la Web API de Spotify (a través de spotify_client.py) y devuelve
 siempre un string ya formateado en español, listo para final_answer().
 
-
+Cada tool atrapa sus propios errores y siempre devuelve un string
+entendible en español — nunca deja que una excepción se propague sin
+control, porque eso tumbaría el proceso completo del agente.
 """
 
 from typing import List
 
 from smolagents import tool
+from spotipy.exceptions import SpotifyException
 
 from spotify_client import get_spotify_client
 
@@ -31,6 +34,34 @@ def format_track(track: dict) -> str:
         f"Popularidad: {popularity}\n"
         f"Spotify: {url}"
     )
+
+
+def _handle_spotify_error(error: SpotifyException) -> str:
+    """Traduce un SpotifyException de la API a un mensaje claro en español.
+
+    spotipy adjunta el código HTTP que devolvió Spotify en `error.http_status`.
+    Usamos ese código para dar una explicación distinta según el problema,
+    en vez de mostrarle al usuario el texto crudo de la excepción.
+    """
+    status = getattr(error, "http_status", None)
+
+    if status == 401:
+        return (
+            "Tu sesión de Spotify expiró o no es válida. "
+            "Vuelve a autorizar la aplicación e inténtalo de nuevo."
+        )
+    if status == 403:
+        return (
+            "Spotify rechazó la solicitud por falta de permisos. "
+            "Verifica que tu cuenta tenga los scopes necesarios autorizados."
+        )
+    if status == 429:
+        return (
+            "Spotify está limitando las solicitudes por exceso de peticiones "
+            "(rate limit). Espera unos segundos e inténtalo de nuevo."
+        )
+
+    return f"Spotify devolvió un error (código {status}): {error.msg}"
 
 
 @tool
@@ -59,46 +90,54 @@ def spotify_search(query: str, limit: int) -> str:
         query: The Spotify search query. It can be an artist, song, album or keyword. Examples: '21 Savage', 'Bad Bunny', 'Linkin Park Numb', 'corridos tumbados'.
         limit: Maximum number of results to return. Use an integer from 1 to 10. If the user asks for 5 songs, use 5.
     """
-    sp = get_spotify_client()
-    limit = max(1, min(limit, 10))
+    try:
+        sp = get_spotify_client()
+        limit = max(1, min(limit, 10))
 
-    results = sp.search(
-        q=query,
-        type="track,artist",
-        limit=limit,
-        market="MX",
-    )
+        results = sp.search(
+            q=query,
+            type="track,artist",
+            limit=limit,
+            market="MX",
+        )
 
-    tracks = results.get("tracks", {}).get("items", [])
-    artists = results.get("artists", {}).get("items", [])
+        tracks = results.get("tracks", {}).get("items", [])
+        artists = results.get("artists", {}).get("items", [])
 
-    output = [f"Resultados de Spotify para: {query}\n"]
+        output = [f"Resultados de Spotify para: {query}\n"]
 
-    if tracks:
-        output.append("CANCIONES ENCONTRADAS:")
-        for index, track in enumerate(tracks, start=1):
-            output.append(f"\n[{index}]\n{format_track(track)}")
+        if tracks:
+            output.append("CANCIONES ENCONTRADAS:")
+            for index, track in enumerate(tracks, start=1):
+                output.append(f"\n[{index}]\n{format_track(track)}")
 
-    if artists:
-        output.append("\nARTISTAS ENCONTRADOS:")
-        for index, artist in enumerate(artists, start=1):
-            name = artist.get("name", "Unknown artist")
-            genres = ", ".join(artist.get("genres", [])) or "Sin géneros disponibles"
-            popularity = artist.get("popularity", "N/A")
-            url = artist.get("external_urls", {}).get("spotify", "No URL")
+        if artists:
+            output.append("\nARTISTAS ENCONTRADOS:")
+            for index, artist in enumerate(artists, start=1):
+                name = artist.get("name", "Unknown artist")
+                genres = ", ".join(artist.get("genres", [])) or "Sin géneros disponibles"
+                popularity = artist.get("popularity", "N/A")
+                url = artist.get("external_urls", {}).get("spotify", "No URL")
 
-            output.append(
-                f"\n[{index}]\n"
-                f"Artista: {name}\n"
-                f"Géneros: {genres}\n"
-                f"Popularidad: {popularity}\n"
-                f"Spotify: {url}"
-            )
+                output.append(
+                    f"\n[{index}]\n"
+                    f"Artista: {name}\n"
+                    f"Géneros: {genres}\n"
+                    f"Popularidad: {popularity}\n"
+                    f"Spotify: {url}"
+                )
 
-    if not tracks and not artists:
-        return f"No encontré resultados en Spotify para: {query}"
+        if not tracks and not artists:
+            return f"No encontré resultados en Spotify para: {query}"
 
-    return "\n".join(output)
+        return "\n".join(output)
+
+    except RuntimeError as error:
+        return f"Error de configuración: {error}"
+    except SpotifyException as error:
+        return _handle_spotify_error(error)
+    except Exception as error:
+        return f"Ocurrió un error inesperado al buscar en Spotify: {error}"
 
 
 @tool
@@ -128,63 +167,71 @@ def spotify_recently_played(limit: int) -> str:
     Args:
         limit: Number of recently played tracks to retrieve. Use an integer from 1 to 50. If the user asks for recent songs without specifying a number, use 20.
     """
-    sp = get_spotify_client()
-    limit = max(1, min(limit, 50))
+    try:
+        sp = get_spotify_client()
+        limit = max(1, min(limit, 50))
 
-    results = sp.current_user_recently_played(limit=limit)
-    items = results.get("items", [])
+        results = sp.current_user_recently_played(limit=limit)
+        items = results.get("items", [])
 
-    if not items:
-        return "No se encontraron canciones reproducidas recientemente."
+        if not items:
+            return "No se encontraron canciones reproducidas recientemente."
 
-    output = [f"Últimas {len(items)} canciones reproducidas:\n"]
+        output = [f"Últimas {len(items)} canciones reproducidas:\n"]
 
-    artist_counter = {}
-    album_counter = {}
+        artist_counter = {}
+        album_counter = {}
 
-    for index, item in enumerate(items, start=1):
-        track = item.get("track", {})
-        played_at = item.get("played_at", "Fecha no disponible")
+        for index, item in enumerate(items, start=1):
+            track = item.get("track", {})
+            played_at = item.get("played_at", "Fecha no disponible")
 
-        name = track.get("name", "Unknown track")
-        artists = [artist["name"] for artist in track.get("artists", [])]
-        artists_text = ", ".join(artists)
-        album = track.get("album", {}).get("name", "Unknown album")
-        url = track.get("external_urls", {}).get("spotify", "No URL")
+            name = track.get("name", "Unknown track")
+            artists = [artist["name"] for artist in track.get("artists", [])]
+            artists_text = ", ".join(artists)
+            album = track.get("album", {}).get("name", "Unknown album")
+            url = track.get("external_urls", {}).get("spotify", "No URL")
 
-        for artist in artists:
-            artist_counter[artist] = artist_counter.get(artist, 0) + 1
+            for artist in artists:
+                artist_counter[artist] = artist_counter.get(artist, 0) + 1
 
-        album_counter[album] = album_counter.get(album, 0) + 1
+            album_counter[album] = album_counter.get(album, 0) + 1
 
-        output.append(
-            f"{index}. {name} — {artists_text}\n"
-            f"   Álbum: {album}\n"
-            f"   Reproducida: {played_at}\n"
-            f"   Link: {url}"
-        )
+            output.append(
+                f"{index}. {name} — {artists_text}\n"
+                f"   Álbum: {album}\n"
+                f"   Reproducida: {played_at}\n"
+                f"   Link: {url}"
+            )
 
-    top_artists = sorted(
-        artist_counter.items(),
-        key=lambda x: x[1],
-        reverse=True,
-    )[:5]
+        top_artists = sorted(
+            artist_counter.items(),
+            key=lambda x: x[1],
+            reverse=True,
+        )[:5]
 
-    top_albums = sorted(
-        album_counter.items(),
-        key=lambda x: x[1],
-        reverse=True,
-    )[:5]
+        top_albums = sorted(
+            album_counter.items(),
+            key=lambda x: x[1],
+            reverse=True,
+        )[:5]
 
-    output.append("\nARTISTAS MÁS REPETIDOS:")
-    for artist, count in top_artists:
-        output.append(f"- {artist}: {count} aparición(es)")
+        output.append("\nARTISTAS MÁS REPETIDOS:")
+        for artist, count in top_artists:
+            output.append(f"- {artist}: {count} aparición(es)")
 
-    output.append("\nÁLBUMES MÁS REPETIDOS:")
-    for album, count in top_albums:
-        output.append(f"- {album}: {count} aparición(es)")
+        output.append("\nÁLBUMES MÁS REPETIDOS:")
+        for album, count in top_albums:
+            output.append(f"- {album}: {count} aparición(es)")
 
-    return "\n".join(output)
+        return "\n".join(output)
+
+    except RuntimeError as error:
+        return f"Error de configuración: {error}"
+    except SpotifyException as error:
+        return _handle_spotify_error(error)
+    except Exception as error:
+        return f"Ocurrió un error inesperado al leer tu historial de Spotify: {error}"
 
 
 @tool
@@ -240,90 +287,101 @@ def spotify_create_playlist_from_search(
             "Para confirmar la creación, usa confirm='SI_CREAR'."
         )
 
-    sp = get_spotify_client()
-    user = sp.current_user()
-    user_id = user["id"]
+    try:
+        sp = get_spotify_client()
+        user = sp.current_user()
+        user_id = user["id"]
 
-    tracks_per_query = max(1, min(tracks_per_query, 5))
-    visibility = visibility.lower().strip()
+        tracks_per_query = max(1, min(tracks_per_query, 5))
+        visibility = visibility.lower().strip()
 
-    if visibility not in ["private", "public"]:
-        return "La visibilidad debe ser exactamente 'private' o 'public'."
+        if visibility not in ["private", "public"]:
+            return "La visibilidad debe ser exactamente 'private' o 'public'."
 
-    is_public = visibility == "public"
+        is_public = visibility == "public"
 
-    queries: List[str] = [
-        query.strip()
-        for query in search_queries.split(";")
-        if query.strip()
-    ]
+        queries: List[str] = [
+            query.strip()
+            for query in search_queries.split(";")
+            if query.strip()
+        ]
 
-    if not queries:
-        return "No se recibieron búsquedas válidas para crear la playlist."
+        if not queries:
+            return "No se recibieron búsquedas válidas para crear la playlist."
 
-    playlist = sp.user_playlist_create(
-        user=user_id,
-        name=playlist_name,
-        public=is_public,
-        description="Playlist creada con un agente local usando smolagents y Spotify API.",
-    )
-
-    playlist_id = playlist["id"]
-    playlist_url = playlist.get("external_urls", {}).get("spotify", "No URL")
-
-    added_uris = []
-    added_descriptions = []
-    seen_uris = set()
-
-    for query in queries:
-        results = sp.search(
-            q=query,
-            type="track",
-            limit=tracks_per_query,
-            market="MX",
+        playlist = sp.user_playlist_create(
+            user=user_id,
+            name=playlist_name,
+            public=is_public,
+            description="Playlist creada con un agente local usando smolagents y Spotify API.",
         )
 
-        tracks = results.get("tracks", {}).get("items", [])
+        playlist_id = playlist["id"]
+        playlist_url = playlist.get("external_urls", {}).get("spotify", "No URL")
 
-        for track in tracks:
-            uri = track.get("uri")
+        added_uris = []
+        added_descriptions = []
+        seen_uris = set()
 
-            if not uri or uri in seen_uris:
-                continue
-
-            seen_uris.add(uri)
-            added_uris.append(uri)
-
-            name = track.get("name", "Unknown track")
-            artists = ", ".join(
-                artist["name"]
-                for artist in track.get("artists", [])
+        for query in queries:
+            results = sp.search(
+                q=query,
+                type="track",
+                limit=tracks_per_query,
+                market="MX",
             )
 
-            album = track.get("album", {}).get("name", "Unknown album")
-            url = track.get("external_urls", {}).get("spotify", "No URL")
+            tracks = results.get("tracks", {}).get("items", [])
 
-            added_descriptions.append(
-                f"- {name} — {artists}\n"
-                f"  Álbum: {album}\n"
-                f"  Link: {url}"
+            for track in tracks:
+                uri = track.get("uri")
+
+                if not uri or uri in seen_uris:
+                    continue
+
+                seen_uris.add(uri)
+                added_uris.append(uri)
+
+                name = track.get("name", "Unknown track")
+                artists = ", ".join(
+                    artist["name"]
+                    for artist in track.get("artists", [])
+                )
+
+                album = track.get("album", {}).get("name", "Unknown album")
+                url = track.get("external_urls", {}).get("spotify", "No URL")
+
+                added_descriptions.append(
+                    f"- {name} — {artists}\n"
+                    f"  Álbum: {album}\n"
+                    f"  Link: {url}"
+                )
+
+        if not added_uris:
+            return (
+                f"Se creó la playlist '{playlist_name}', "
+                "pero no se encontraron canciones para agregar."
             )
 
-    if not added_uris:
+        sp.playlist_add_items(
+            playlist_id=playlist_id,
+            items=added_uris,
+        )
+
         return (
-            f"Se creó la playlist '{playlist_name}', "
-            "pero no se encontraron canciones para agregar."
+            f"Playlist creada correctamente: {playlist_name}\n"
+            f"Visibilidad: {'Pública' if is_public else 'Privada'}\n"
+            f"Canciones agregadas: {len(added_uris)}\n"
+            f"Link: {playlist_url}\n\n"
+            f"Canciones agregadas:\n" + "\n".join(added_descriptions)
         )
 
-    sp.playlist_add_items(
-        playlist_id=playlist_id,
-        items=added_uris,
-    )
-
-    return (
-        f"Playlist creada correctamente: {playlist_name}\n"
-        f"Visibilidad: {'Pública' if is_public else 'Privada'}\n"
-        f"Canciones agregadas: {len(added_uris)}\n"
-        f"Link: {playlist_url}\n\n"
-        f"Canciones agregadas:\n" + "\n".join(added_descriptions)
-    )
+    except RuntimeError as error:
+        return f"Error de configuración: {error}"
+    except SpotifyException as error:
+        return (
+            "La playlist pudo haberse creado parcialmente antes del error. "
+            "Revisa tu cuenta de Spotify. Detalle: " + _handle_spotify_error(error)
+        )
+    except Exception as error:
+        return f"Ocurrió un error inesperado al crear la playlist: {error}"
