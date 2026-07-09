@@ -8,11 +8,14 @@ No contiene lógica de negocio (búsquedas, playlists, etc.) — eso vive
 en tools.py. Este archivo solo resuelve "¿cómo me conecto a Spotify?".
 """
 
+import logging
 import os
 
 import spotipy
 from dotenv import load_dotenv
 from spotipy.oauth2 import SpotifyOAuth
+
+logger = logging.getLogger(__name__)
 
 
 # Carga las variables definidas en tu archivo .env (SPOTIPY_CLIENT_ID, etc.)
@@ -54,6 +57,7 @@ def _build_spotify_client() -> spotipy.Spotify:
     missing = [var for var in required_vars if not os.getenv(var)]
 
     if missing:
+        logger.error("Faltan variables de entorno: %s", ", ".join(missing))
         raise RuntimeError(
             "Faltan variables de entorno en tu archivo .env: "
             + ", ".join(missing)
@@ -68,6 +72,7 @@ def _build_spotify_client() -> spotipy.Spotify:
         open_browser=True,
     )
 
+    logger.info("Cliente de Spotify construido correctamente.")
     return spotipy.Spotify(auth_manager=auth_manager)
 
 
@@ -95,5 +100,7 @@ def get_spotify_client() -> spotipy.Spotify:
 
     if _cached_client is None:
         _cached_client = _build_spotify_client()
+    else:
+        logger.debug("Reutilizando cliente de Spotify ya cacheado.")
 
     return _cached_client
