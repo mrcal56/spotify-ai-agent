@@ -1,51 +1,23 @@
-import os
+"""
+Módulo con las herramientas (tools) que el agente de IA puede usar.
+
+Responsabilidad única de este archivo: definir las funciones decoradas
+con @tool que smolagents expone al modelo. Cada tool sabe cómo hablar
+con la Web API de Spotify (a través de spotify_client.py) y devuelve
+siempre un string ya formateado en español, listo para final_answer().
+
+
+"""
+
 from typing import List
 
-import spotipy
-from dotenv import load_dotenv
-from spotipy.oauth2 import SpotifyOAuth
-from smolagents import CodeAgent, LiteLLMModel, tool
+from smolagents import tool
 
-
-load_dotenv()
-
-SPOTIFY_SCOPES = (
-    "user-read-recently-played "
-    "playlist-modify-private "
-    "playlist-modify-public"
-)
-
-
-def get_spotify_client() -> spotipy.Spotify:
-    """Creates an authenticated Spotify client."""
-    required_vars = [
-        "SPOTIPY_CLIENT_ID",
-        "SPOTIPY_CLIENT_SECRET",
-        "SPOTIPY_REDIRECT_URI",
-    ]
-
-    missing = [var for var in required_vars if not os.getenv(var)]
-
-    if missing:
-        raise RuntimeError(
-            "Faltan variables de entorno en tu archivo .env: "
-            + ", ".join(missing)
-        )
-
-    auth_manager = SpotifyOAuth(
-        client_id=os.getenv("SPOTIPY_CLIENT_ID"),
-        client_secret=os.getenv("SPOTIPY_CLIENT_SECRET"),
-        redirect_uri=os.getenv("SPOTIPY_REDIRECT_URI"),
-        scope=SPOTIFY_SCOPES,
-        cache_path=".spotify_cache",
-        open_browser=True,
-    )
-
-    return spotipy.Spotify(auth_manager=auth_manager)
+from spotify_client import get_spotify_client
 
 
 def format_track(track: dict) -> str:
-    """Formats a Spotify track into readable text."""
+    """Formatea un track de Spotify (dict crudo de la API) a texto legible."""
     name = track.get("name", "Unknown track")
     artists = ", ".join(artist["name"] for artist in track.get("artists", []))
     album = track.get("album", {}).get("name", "Unknown album")
@@ -97,7 +69,6 @@ def spotify_search(query: str, limit: int) -> str:
         market="MX",
     )
 
-
     tracks = results.get("tracks", {}).get("items", [])
     artists = results.get("artists", {}).get("items", [])
 
@@ -128,7 +99,6 @@ def spotify_search(query: str, limit: int) -> str:
         return f"No encontré resultados en Spotify para: {query}"
 
     return "\n".join(output)
-
 
 
 @tool
@@ -357,114 +327,3 @@ def spotify_create_playlist_from_search(
         f"Link: {playlist_url}\n\n"
         f"Canciones agregadas:\n" + "\n".join(added_descriptions)
     )
-
-model = LiteLLMModel(
-    model_id="ollama_chat/qwen2.5-coder:7b",
-    api_base="http://localhost:11434",
-    api_key="ollama",
-    temperature=0.2,
-)
-
-agent = CodeAgent(
-    model=model,
-    tools=[
-        spotify_search,
-        spotify_recently_played,
-        spotify_create_playlist_from_search,
-    ],
-    max_steps=3,
-    verbosity_level=1,
-)
-
-
-if __name__ == "__main__":
-    print("Agente Spotify listo.")
-    print("Escribe 'salir' para terminar.\n")
-
-    while True:
-        
-        user_task = input("Tú: ").strip()
-
-        if user_task.lower() in ["salir", "exit", "quit"]:
-            print("Agente finalizado.")
-            break
-
-        safe_task = f"""
-You are a Spotify assistant controlled by a local smolagents CodeAgent.
-
-CRITICAL RULES:
-- Answer in Spanish.
-- Use only the tools explicitly available in this agent.
-- Never use web_search.
-- Never use google_search.
-- Never use browser_search.
-- Never invent tools.
-- Never assume Spotify data.
-- Never use print().
-- Never repeat the same tool result multiple times.
-- Never call the same tool again if you already have the result.
-- The Spotify tools return formatted text strings.
-- Do not iterate over the result of any Spotify tool.
-- Do not access the result as a dictionary or list.
-- After using a Spotify tool, you MUST call final_answer(result).
-- Do not explain how to use the tool. Execute the tool and return the result.
-- Your final code must end with final_answer(result).
-
-Available tools:
-
-1. spotify_search
-Use this tool when the user asks to search for songs, artists, albums or Spotify links.
-It returns a formatted string with song name, artist, album, popularity and Spotify link.
-
-Correct usage:
-result = spotify_search(query="21 Savage", limit=5)
-final_answer(result)
-
-Incorrect usage:
-result = spotify_search(query="21 Savage", limit=5)
-print(result)
-
-Incorrect usage:
-songs = spotify_search(query="21 Savage", limit=5)
-for song in songs:
-    print(song["title"])
-
-2. spotify_recently_played
-Use this tool when the user asks to analyze recently played songs, listening history, repeated artists or recent Spotify activity.
-It returns a formatted string with recent songs, artists, albums and repeated artists.
-
-Correct usage:
-result = spotify_recently_played(limit=20)
-final_answer(result)
-
-3. spotify_create_playlist_from_search
-Use this tool only when the user explicitly asks to create a Spotify playlist.
-It creates a playlist in the user's Spotify account.
-It requires confirm="SI_CREAR".
-visibility must be "private" or "public".
-search_queries must be one string separated by semicolons.
-
-Correct usage:
-result = spotify_create_playlist_from_search(
-    playlist_name="Rap para entrenar",
-    search_queries="21 Savage; Drake; Metro Boomin",
-    tracks_per_query=2,
-    visibility="private",
-    confirm="SI_CREAR"
-)
-final_answer(result)
-
-User task:
-{user_task}
-"""
-        
-
-        try:
-            response = agent.run(safe_task)
-            print("\nRespuesta del agente:\n")
-            print(response)
-            print("\n" + "-" * 80 + "\n")
-        except Exception as error:
-            print("\nOcurrió un error:")
-            print(error)
-            print("\n" + "-" * 80 + "\n")
