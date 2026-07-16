@@ -96,6 +96,13 @@ Si se agregan o cambian scopes, normalmente hay que borrar `.spotify_cache` y vo
 - Agregar cancion a la cola desde busqueda.
 - Listar dispositivos disponibles.
 - Transferir reproduccion a un `device_id` explicito.
+- Modo DJ: agrega 3 canciones a la cola usando cancion actual, historial reciente y scoring por modo.
+
+### Modos DJ
+
+- `similar`: modo por defecto; balancea artista actual, historial reciente y popularidad.
+- `popular`: prioriza canciones conocidas o con mayor popularidad en Spotify.
+- `discover`: busca musica relacionada menos obvia y penaliza repetir demasiado artistas recientes.
 
 ## Router Rapido
 
@@ -112,6 +119,9 @@ Ejemplos de comandos directos:
 - `agrega FEIN a la cola`
 - `pon Bohemian Rhapsody despues`
 - `transfiere al device_id <ID>`
+- `modo dj`
+- `modo dj popular`
+- `sorprendeme`
 
 Si el router no detecta un comando simple, el flujo cae al agente en `agent.py`.
 
@@ -126,6 +136,7 @@ Si el router no detecta un comando simple, el flujo cae al agente en `agent.py`.
 - Cancion anterior usa `SI_ANTERIOR`.
 - Agregar a cola usa `SI_COLA`.
 - Transferir reproduccion usa `SI_TRANSFERIR`.
+- Modo DJ usa `SI_DJ`.
 
 El agente no debe inventar datos de Spotify. Debe usar tools y responder con el resultado devuelto.
 
@@ -170,7 +181,6 @@ Reglas adicionales:
 
 ## Proximas Ideas
 
-- Mini DJ: agregar a cola una cancion similar a la reproduccion actual.
 - Control de volumen.
 - Shuffle y repeat.
 - Guardar cancion actual en favoritos o en una playlist.

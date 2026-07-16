@@ -19,6 +19,7 @@ from prompts import build_safe_task
 from tools import (
     spotify_add_track_to_queue_from_search,
     spotify_current_playback,
+    spotify_dj_queue_similar_to_current,
     spotify_list_devices,
     spotify_next_track,
     spotify_pause_playback,
@@ -109,6 +110,29 @@ QUEUE_COMMAND_SUFFIXES = (
     "despues de esta",
 )
 
+DJ_COMMAND_PHRASES = (
+    "modo dj",
+    "pon algo parecido",
+    "agrega algo similar a la cola",
+    "sorprendeme",
+    "dj pon musica parecida",
+)
+
+DJ_POPULAR_HINTS = (
+    "popular",
+    "hits",
+    "conocidas",
+    "famosas",
+)
+
+DJ_DISCOVER_HINTS = (
+    "descubre",
+    "discovery",
+    "sorprendeme",
+    "nuevo",
+    "nueva",
+)
+
 
 def _normalize_text(text: str) -> str:
     """Normaliza texto del usuario para detectar comandos rápidos."""
@@ -154,9 +178,31 @@ def _extract_device_id(normalized_task: str) -> str | None:
     return None
 
 
+def _detect_dj_mode(normalized_task: str) -> str | None:
+    """Detecta comandos DJ y devuelve el modo solicitado."""
+    if not any(phrase in normalized_task for phrase in DJ_COMMAND_PHRASES):
+        return None
+
+    if any(hint in normalized_task for hint in DJ_POPULAR_HINTS):
+        return "popular"
+    if any(hint in normalized_task for hint in DJ_DISCOVER_HINTS):
+        return "discover"
+
+    return "similar"
+
+
 def try_fast_playback_command(user_task: str) -> str | None:
     """Ejecuta controles simples de Spotify sin pasar por el LLM."""
     normalized_task = _normalize_text(user_task)
+
+    dj_mode = _detect_dj_mode(normalized_task)
+    if dj_mode:
+        logger.info("Comando rapido DJ detectado: %s (mode=%s)", user_task, dj_mode)
+        return spotify_dj_queue_similar_to_current(
+            queue_count=3,
+            mode=dj_mode,
+            confirm="SI_DJ",
+        )
 
     queue_query = _extract_queue_query(normalized_task)
     if queue_query:

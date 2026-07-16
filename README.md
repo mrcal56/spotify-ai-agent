@@ -104,6 +104,18 @@ lista mis playlists
 muestrame mis ultimas 20 canciones escuchadas
 ```
 
+```text
+modo dj
+```
+
+```text
+modo dj popular
+```
+
+```text
+sorprendeme
+```
+
 Para salir:
 
 ```text
@@ -120,6 +132,34 @@ Por seguridad, las tools internas requieren confirmaciones explicitas:
 - Agregar canciones a playlist existente: `SI_AGREGAR`
 
 Si el agente no tiene una confirmacion clara, no deberia ejecutar acciones destructivas o de escritura.
+
+## Modo DJ
+
+El modo DJ agrega 3 canciones a la cola basandose en la cancion actual y tu historial reciente.
+
+Modos disponibles:
+
+- `similar`: modo por defecto; balancea artista actual, historial reciente y popularidad.
+- `popular`: prioriza canciones conocidas o con mayor popularidad en Spotify.
+- `discover`: busca opciones relacionadas pero menos obvias, evitando repetir demasiado lo reciente.
+
+Ejemplos:
+
+```text
+modo dj
+```
+
+```text
+modo dj popular
+```
+
+```text
+pon algo parecido
+```
+
+```text
+sorprendeme
+```
 
 ## Archivos Principales
 

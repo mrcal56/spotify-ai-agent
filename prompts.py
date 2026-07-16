@@ -34,6 +34,7 @@ Reglas obligatorias:
 - Si el usuario pide ver dispositivos disponibles, usa spotify_list_devices.
 - Si el usuario pide transferir reproduccion pero no da device_id, usa spotify_list_devices y pide que elija un device_id.
 - Si el usuario pide transferir reproduccion y da device_id, usa spotify_transfer_playback con confirm="SI_TRANSFERIR".
+- Si el usuario pide modo DJ, algo parecido a lo actual, recomendaciones similares o sorprenderlo con musica relacionada, usa spotify_dj_queue_similar_to_current con queue_count=3 y confirm="SI_DJ". Usa mode="popular" si pide popular/hits/conocidas, mode="discover" si pide descubrir/sorprender/nuevo, si no usa mode="similar".
 - Si la tarea pide crear una playlist, solo hazlo si hay una confirmacion clara del usuario.
 - Si la tarea pide agregar canciones a una playlist existente, solo hazlo si hay una confirmacion clara del usuario y un playlist_id.
 - Si usas cualquier tool de Spotify, guarda el resultado en una variable llamada result.

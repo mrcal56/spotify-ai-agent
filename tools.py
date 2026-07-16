@@ -584,6 +584,276 @@ def spotify_transfer_playback(device_id: str, confirm: str) -> str:
         return f"Ocurrio un error inesperado al transferir la reproduccion: {error}"
 
 
+def _track_artist_names(track: dict) -> list[str]:
+    """Extrae nombres de artistas de un track de Spotify."""
+    return [artist.get("name", "") for artist in track.get("artists", []) if artist.get("name")]
+
+
+def _get_current_track_context(sp) -> dict | None:
+    """Devuelve contexto del track actual o None si no hay cancion activa."""
+    playback = sp.current_playback()
+    if not playback:
+        return None
+
+    track = playback.get("item") or {}
+    if track.get("type") != "track":
+        return None
+
+    artists = _track_artist_names(track)
+    if not artists:
+        return None
+
+    return {
+        "id": track.get("id"),
+        "uri": track.get("uri"),
+        "name": track.get("name", ""),
+        "artists": artists,
+        "primary_artist": artists[0],
+        "track": track,
+    }
+
+
+def _get_recent_track_context(sp, limit: int = 20) -> dict:
+    """Resume historial reciente para evitar repetidos y puntuar candidatos."""
+    recent_track_ids = set()
+    recent_artist_counts = {}
+
+    try:
+        results = sp.current_user_recently_played(limit=limit)
+    except SpotifyException:
+        logger.warning("No se pudo leer historial reciente para DJ", exc_info=True)
+        return {"track_ids": recent_track_ids, "artist_counts": recent_artist_counts}
+
+    for item in results.get("items", []):
+        track = item.get("track") or {}
+        track_id = track.get("id")
+        if track_id:
+            recent_track_ids.add(track_id)
+
+        for artist_name in _track_artist_names(track):
+            recent_artist_counts[artist_name] = recent_artist_counts.get(artist_name, 0) + 1
+
+    return {"track_ids": recent_track_ids, "artist_counts": recent_artist_counts}
+
+
+def _build_dj_search_queries(current: dict, recent: dict, mode: str) -> list[tuple[str, int]]:
+    """Construye queries DJ con peso: mayor peso significa mayor confianza."""
+    primary_artist = current["primary_artist"]
+    current_name = current["name"]
+    recent_artists = sorted(
+        recent["artist_counts"].items(),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+
+    weighted_queries = [
+        (primary_artist, 50),
+        (f"{primary_artist} {current_name}", 45),
+    ]
+
+    for artist in current["artists"][1:3]:
+        weighted_queries.append((artist, 35))
+
+    for artist, count in recent_artists[:4]:
+        if artist != primary_artist:
+            weighted_queries.append((artist, 30 + min(count * 5, 20)))
+
+    if mode == "popular":
+        weighted_queries.extend([
+            (f"{primary_artist} popular", 40),
+            (f"{primary_artist} hits", 38),
+        ])
+    elif mode == "discover":
+        weighted_queries.extend([
+            (f"{primary_artist} radio", 34),
+            (f"{primary_artist} similar", 34),
+        ])
+        for artist, _count in recent_artists[4:8]:
+            weighted_queries.append((artist, 28))
+    else:
+        weighted_queries.extend([
+            (f"{primary_artist} similar", 36),
+            (f"{primary_artist} radio", 32),
+        ])
+
+    seen_queries = set()
+    unique_queries = []
+    for query, weight in weighted_queries:
+        normalized_query = query.lower().strip()
+        if normalized_query and normalized_query not in seen_queries:
+            seen_queries.add(normalized_query)
+            unique_queries.append((query, weight))
+
+    return unique_queries[:10]
+
+
+def _score_dj_candidate(track: dict, current: dict, recent: dict, query_weight: int, mode: str) -> int:
+    """Puntua un candidato DJ usando similitud, historial y popularidad."""
+    track_id = track.get("id")
+    if not track_id or not track.get("uri"):
+        return -1000
+    if track_id == current.get("id"):
+        return -1000
+    if track_id in recent["track_ids"]:
+        return -400
+
+    artist_names = _track_artist_names(track)
+    if not artist_names:
+        return -1000
+
+    current_artists = set(current["artists"])
+    recent_artist_counts = recent["artist_counts"]
+    popularity = int(track.get("popularity") or 0)
+    score = query_weight + min(popularity, 100) // 3
+
+    shared_current_artists = current_artists.intersection(artist_names)
+    if shared_current_artists:
+        score += 45
+
+    recent_overlap = sum(recent_artist_counts.get(artist, 0) for artist in artist_names)
+    if recent_overlap:
+        score += min(35, recent_overlap * 8)
+
+    if mode == "popular":
+        score += popularity // 2
+        if popularity < 45:
+            score -= 25
+    elif mode == "discover":
+        if shared_current_artists:
+            score -= 25
+        if recent_overlap:
+            score -= min(30, recent_overlap * 6)
+        if 35 <= popularity <= 80:
+            score += 25
+        elif popularity > 90:
+            score -= 10
+    else:
+        if popularity < 25:
+            score -= 15
+
+    return score
+
+
+def _collect_dj_candidates(sp, current: dict, recent: dict, mode: str) -> list[tuple[int, dict]]:
+    """Busca y puntua candidatos para el DJ."""
+    candidates_by_id = {}
+
+    for query, query_weight in _build_dj_search_queries(current, recent, mode):
+        results = sp.search(q=query, type="track", limit=8, market="MX")
+        for track in results.get("tracks", {}).get("items", []):
+            track_id = track.get("id")
+            if not track_id:
+                continue
+
+            score = _score_dj_candidate(track, current, recent, query_weight, mode)
+            previous = candidates_by_id.get(track_id)
+            if previous is None or score > previous[0]:
+                candidates_by_id[track_id] = (score, track)
+
+    candidates = [candidate for candidate in candidates_by_id.values() if candidate[0] > 0]
+    return sorted(candidates, key=lambda item: item[0], reverse=True)
+
+
+def _format_dj_track(track: dict, score: int) -> str:
+    """Formatea un track agregado por el DJ."""
+    name = track.get("name", "Unknown track")
+    artists = ", ".join(_track_artist_names(track)) or "Artista no disponible"
+    album = track.get("album", {}).get("name", "Album no disponible")
+    url = track.get("external_urls", {}).get("spotify", "No URL")
+
+    return (
+        f"- {name} - {artists}\n"
+        f"  Album: {album}\n"
+        f"  Score DJ: {score}\n"
+        f"  Link: {url}"
+    )
+
+
+@tool
+def spotify_dj_queue_similar_to_current(queue_count: int, mode: str, confirm: str) -> str:
+    """Queues DJ-style recommendations based on current playback and recent history.
+
+    Use this tool when the user asks to:
+    - enable DJ mode
+    - queue music similar to what is currently playing
+    - surprise them with related songs
+    - add several recommended songs to the queue
+
+    Important usage rules:
+    - This tool modifies playback queue.
+    - The user must provide confirmation with the exact value 'SI_DJ'.
+    - If confirm is not exactly 'SI_DJ', nothing will be added.
+    - queue_count should normally be 3, and must be between 1 and 5.
+    - mode must be 'similar', 'popular' or 'discover'. Use 'similar' by default.
+    - After calling this tool, pass the returned text directly to final_answer.
+
+    Args:
+        queue_count: Number of songs to add to the queue. Default should be 3.
+        mode: Recommendation mode: 'similar', 'popular' or 'discover'.
+        confirm: Safety confirmation. Must be exactly 'SI_DJ' to add songs.
+    """
+    if confirm != "SI_DJ":
+        return "No active el modo DJ. Para confirmar, usa confirm='SI_DJ'."
+
+    logger.info("spotify_dj_queue_similar_to_current llamada: queue_count=%s, mode=%r", queue_count, mode)
+
+    try:
+        sp = get_spotify_client()
+        queue_count = max(1, min(int(queue_count), 5))
+        mode = mode.lower().strip()
+
+        if mode not in ["similar", "popular", "discover"]:
+            mode = "similar"
+
+        current = _get_current_track_context(sp)
+        if current is None:
+            return (
+                "No puedo activar el DJ porque no hay una cancion activa. "
+                "Reproduce una cancion en Spotify e intentalo de nuevo."
+            )
+
+        recent = _get_recent_track_context(sp)
+        candidates = _collect_dj_candidates(sp, current, recent, mode)
+
+        if not candidates:
+            return (
+                "No encontre suficientes canciones buenas para agregar a la cola. "
+                "Prueba cuando tengas una cancion activa distinta o mas historial reciente."
+            )
+
+        selected = candidates[:queue_count]
+        for _score, track in selected:
+            sp.add_to_queue(track["uri"])
+
+        output = [
+            "Modo DJ activo.",
+            f"Modo: {mode}",
+            f"Base: {current['name']} - {', '.join(current['artists'])}",
+            f"Canciones agregadas a la cola: {len(selected)}",
+            "",
+            "Seleccion DJ:",
+        ]
+        output.extend(_format_dj_track(track, score) for score, track in selected)
+
+        if len(selected) < queue_count:
+            output.extend([
+                "",
+                f"Solo agregue {len(selected)} de {queue_count} canciones porque filtre duplicados o canciones recientes.",
+            ])
+
+        return "\n".join(output)
+
+    except RuntimeError as error:
+        logger.error("Error de configuracion en spotify_dj_queue_similar_to_current: %s", error)
+        return f"Error de configuracion: {error}"
+    except SpotifyException as error:
+        logger.error("SpotifyException en spotify_dj_queue_similar_to_current: %s", error, exc_info=True)
+        return _handle_spotify_error(error)
+    except Exception as error:
+        logger.error("Error inesperado en spotify_dj_queue_similar_to_current: %s", error, exc_info=True)
+        return f"Ocurrio un error inesperado al activar el modo DJ: {error}"
+
+
 @tool
 def spotify_list_user_playlists(limit: int) -> str:
     """Lists the current user's Spotify playlists.

@@ -42,6 +42,7 @@ from tools import (
     spotify_add_track_to_queue_from_search,
     spotify_list_devices,
     spotify_transfer_playback,
+    spotify_dj_queue_similar_to_current,
     spotify_add_tracks_to_playlist_from_search,
     spotify_create_playlist_from_search,
 )
@@ -77,6 +78,7 @@ def reject_bad_final_answer(final_answer, agent_memory=None, agent=None) -> bool
         "spotify_add_track_to_queue_from_search(",
         "spotify_list_devices(",
         "spotify_transfer_playback(",
+        "spotify_dj_queue_similar_to_current(",
         "spotify_add_tracks_to_playlist_from_search(",
         "spotify_create_playlist_from_search(",
         "print(",
@@ -108,6 +110,7 @@ agent = CodeAgent(
         spotify_add_track_to_queue_from_search,
         spotify_list_devices,
         spotify_transfer_playback,
+        spotify_dj_queue_similar_to_current,
         spotify_add_tracks_to_playlist_from_search,
         spotify_create_playlist_from_search,
     ],
