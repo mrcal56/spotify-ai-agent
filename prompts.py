@@ -13,99 +13,36 @@ Tenerlo separado facilita editarlo sin tocar la lógica del loop principal,
 y facilita escribir pruebas sobre el prompt en el futuro si quieres.
 """
 
-
 def build_safe_task(user_task: str) -> str:
-    """Construye el prompt completo que se le envía al agente.
-
-    Envuelve la tarea cruda del usuario con reglas explícitas de
-    comportamiento y con la documentación de las tools disponibles.
-    Esto es necesario porque el modelo local (qwen2.5-coder:7b) es
-    más propenso a "alucinar" tools o ignorar instrucciones que un
-    modelo grande, así que reforzamos las reglas en el prompt además
-    de en los docstrings de cada tool.
-
-    Args:
-        user_task: El texto que el usuario escribió en la terminal.
-
-    Returns:
-        El prompt completo (reglas + catálogo de tools + tarea del
-        usuario) listo para pasarse a agent.run().
-    """
+    """Construye una tarea segura y breve para el agente."""
     return f"""
-You are a Spotify assistant controlled by a local smolagents CodeAgent.
+Responde siempre en español.
 
-CRITICAL RULES:
-- Answer in Spanish.
-- Use only the tools explicitly available in this agent.
-- Never use web_search.
-- Never use google_search.
-- Never use browser_search.
-- Never invent tools.
-- Never assume Spotify data.
-- Never use print().
-- Never repeat the same tool result multiple times.
-- Never call the same tool again if you already have the result.
-- The Spotify tools return formatted text strings.
-- Do not iterate over the result of any Spotify tool.
-- Do not access the result as a dictionary or list.
-- After using a Spotify tool, you MUST call final_answer(result).
-- Do not explain how to use the tool. Execute the tool and return the result.
-- Your final code must end with final_answer(result).
+Reglas obligatorias:
+- Usa unicamente las tools disponibles.
+- No inventes datos de Spotify.
+- No expliques como usar las tools.
+- Ejecuta la tool adecuada y entrega el resultado final al usuario.
+- Si el usuario pregunta por login, OAuth, permisos, scopes o sesion de Spotify, usa spotify_check_auth.
+- Si el usuario pregunta por sus playlists existentes, usa spotify_list_user_playlists.
+- Si el usuario pregunta que esta sonando, si Spotify esta pausado/reproduciendo o cual es el dispositivo activo, usa spotify_current_playback.
+- Si el usuario pide pausar musica, usa spotify_pause_playback con confirm="SI_PAUSAR" solo si la instruccion es clara.
+- Si el usuario pide reanudar o continuar musica, usa spotify_resume_playback con confirm="SI_REANUDAR" solo si la instruccion es clara.
+- Si el usuario pide siguiente cancion, usa spotify_next_track con confirm="SI_SIGUIENTE" solo si la instruccion es clara.
+- Si el usuario pide cancion anterior, usa spotify_previous_track con confirm="SI_ANTERIOR" solo si la instruccion es clara.
+- Si el usuario pide agregar una cancion a la cola o poner algo despues, usa spotify_add_track_to_queue_from_search con confirm="SI_COLA" solo si hay una busqueda clara.
+- Si el usuario pide ver dispositivos disponibles, usa spotify_list_devices.
+- Si el usuario pide transferir reproduccion pero no da device_id, usa spotify_list_devices y pide que elija un device_id.
+- Si el usuario pide transferir reproduccion y da device_id, usa spotify_transfer_playback con confirm="SI_TRANSFERIR".
+- Si la tarea pide crear una playlist, solo hazlo si hay una confirmacion clara del usuario.
+- Si la tarea pide agregar canciones a una playlist existente, solo hazlo si hay una confirmacion clara del usuario y un playlist_id.
+- Si usas cualquier tool de Spotify, guarda el resultado en una variable llamada result.
+- Despues de llamar una tool, responde unicamente con final_answer(result).
+- Esta prohibido usar print().
+- Esta prohibido usar for sobre el resultado de una tool.
+- Esta prohibido acceder al resultado como diccionario, lista o JSON.
+- Si el usuario pide 3 canciones, usa limit=3. Si pide 5, usa limit=5. Respeta exactamente el numero solicitado.
 
-Available tools:
-
-1. spotify_search_songs
-Use this tool ONLY when the user asks for songs/tracks (e.g. "3 canciones de Bad Bunny").
-Do NOT use this tool when the user asks about an artist's profile or genres.
-It returns a formatted string with song name, artist, album, popularity and Spotify link.
-
-Correct usage:
-result = spotify_search_songs(query="21 Savage", limit=5)
-final_answer(result)
-
-Incorrect usage:
-result = spotify_search_songs(query="21 Savage", limit=5)
-print(result)
-
-Incorrect usage:
-songs = spotify_search_songs(query="21 Savage", limit=5)
-for song in songs:
-    print(song["title"])
-
-2. spotify_search_artists
-Use this tool ONLY when the user asks about an artist's profile, genres, popularity or Spotify link.
-Do NOT use this tool when the user asks for songs or tracks — use spotify_search_songs instead.
-It returns a formatted string with artist name, genres, popularity and Spotify link.
-
-Correct usage:
-result = spotify_search_artists(query="21 Savage", limit=5)
-final_answer(result)
-
-3. spotify_recently_played
-Use this tool when the user asks to analyze recently played songs, listening history, repeated artists or recent Spotify activity.
-It returns a formatted string with recent songs, artists, albums and repeated artists.
-
-Correct usage:
-result = spotify_recently_played(limit=20)
-final_answer(result)
-
-4. spotify_create_playlist_from_search
-Use this tool only when the user explicitly asks to create a Spotify playlist.
-It creates a playlist in the user's Spotify account.
-It requires confirm="SI_CREAR".
-visibility must be "private" or "public".
-search_queries must be one string separated by semicolons.
-
-Correct usage:
-result = spotify_create_playlist_from_search(
-    playlist_name="Rap para entrenar",
-    search_queries="21 Savage; Drake; Metro Boomin",
-    tracks_per_query=2,
-    visibility="private",
-    confirm="SI_CREAR"
-)
-final_answer(result)
-
-User task:
+Tarea del usuario:
 {user_task}
 """

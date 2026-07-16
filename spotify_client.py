@@ -24,11 +24,19 @@ load_dotenv()
 
 # Permisos (scopes) que el agente necesita pedirle al usuario en Spotify:
 # - user-read-recently-played: para leer el historial de reproducción.
+# - user-read-currently-playing / user-read-playback-state: para ver qué suena.
+# - user-modify-playback-state: para pausar, reanudar y cambiar canción.
 # - playlist-modify-private / playlist-modify-public: para crear y llenar playlists.
+# - playlist-read-private / playlist-read-collaborative: para listar playlists existentes.
 SPOTIFY_SCOPES = (
     "user-read-recently-played "
+    "user-read-currently-playing "
+    "user-read-playback-state "
+    "user-modify-playback-state "
     "playlist-modify-private "
-    "playlist-modify-public"
+    "playlist-modify-public "
+    "playlist-read-private "
+    "playlist-read-collaborative"
 )
 
 # Caché a nivel de módulo: guarda la única instancia de spotipy.Spotify

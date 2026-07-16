@@ -29,9 +29,20 @@ litellm.suppress_debug_info = True
 litellm.set_verbose = False
 
 from tools import (
+    spotify_check_auth,
+    spotify_list_user_playlists,
     spotify_search_songs,
     spotify_search_artists,
     spotify_recently_played,
+    spotify_current_playback,
+    spotify_pause_playback,
+    spotify_resume_playback,
+    spotify_next_track,
+    spotify_previous_track,
+    spotify_add_track_to_queue_from_search,
+    spotify_list_devices,
+    spotify_transfer_playback,
+    spotify_add_tracks_to_playlist_from_search,
     spotify_create_playlist_from_search,
 )
 
@@ -40,11 +51,41 @@ from tools import (
 # LiteLLM como capa de compatibilidad para que smolagents pueda hablarle
 # con la misma interfaz que usaría para OpenAI, Anthropic, etc.
 model = LiteLLMModel(
-    model_id="ollama_chat/qwen2.5-coder:7b",
+    model_id="ollama_chat/llama3.2:3b",
     api_base="http://localhost:11434",
     api_key="ollama",
     temperature=0.2,
 )
+
+def reject_bad_final_answer(final_answer, agent_memory=None, agent=None) -> bool:
+    """Evita respuestas finales con código o instrucciones internas."""
+    answer = str(final_answer)
+
+    forbidden_fragments = [
+        "```python",
+        "final_answer(",
+        "spotify_check_auth(",
+        "spotify_list_user_playlists(",
+        "spotify_search_songs(",
+        "spotify_search_artists(",
+        "spotify_recently_played(",
+        "spotify_current_playback(",
+        "spotify_pause_playback(",
+        "spotify_resume_playback(",
+        "spotify_next_track(",
+        "spotify_previous_track(",
+        "spotify_add_track_to_queue_from_search(",
+        "spotify_list_devices(",
+        "spotify_transfer_playback(",
+        "spotify_add_tracks_to_playlist_from_search(",
+        "spotify_create_playlist_from_search(",
+        "print(",
+        "for ",
+        "song['",
+        'song["',
+    ]
+
+    return not any(fragment in answer for fragment in forbidden_fragments)
 
 # El CodeAgent es el tipo de agente de smolagents que escribe y ejecuta
 # código Python para decidir qué tool llamar (en vez de, por ejemplo,
@@ -54,11 +95,23 @@ model = LiteLLMModel(
 agent = CodeAgent(
     model=model,
     tools=[
+        spotify_check_auth,
+        spotify_list_user_playlists,
         spotify_search_songs,
         spotify_search_artists,
         spotify_recently_played,
+        spotify_current_playback,
+        spotify_pause_playback,
+        spotify_resume_playback,
+        spotify_next_track,
+        spotify_previous_track,
+        spotify_add_track_to_queue_from_search,
+        spotify_list_devices,
+        spotify_transfer_playback,
+        spotify_add_tracks_to_playlist_from_search,
         spotify_create_playlist_from_search,
     ],
-    max_steps=3,
+    max_steps=2,
     verbosity_level=1,
+    final_answer_checks=[reject_bad_final_answer],
 )
