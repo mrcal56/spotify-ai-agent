@@ -14,6 +14,7 @@ control, porque eso tumbaría el proceso completo del agente.
 import json
 import logging
 import time
+from collections import Counter
 from pathlib import Path
 from typing import List
 
@@ -855,7 +856,7 @@ def spotify_dj_queue_similar_to_current(queue_count: int, mode: str, confirm: st
 
 
 @tool
-def spotify_list_user_playlists(limit: int) -> str:
+def spotify_list_user_playlists(limit: int = 20) -> str:
     """Lists the current user's Spotify playlists.
 
     Use this tool when the user asks to:
@@ -1172,6 +1173,344 @@ def _chunks(items: list[str], size: int) -> list[list[str]]:
 def _split_search_queries(search_queries: str) -> list[str]:
     """Normaliza busquedas separadas por punto y coma."""
     return [query.strip() for query in search_queries.split(";") if query.strip()]
+
+
+def _normalize_playlist_query(text: str) -> str:
+    """Normaliza texto simple para comparar nombres de playlist."""
+    return " ".join(text.lower().strip().split())
+
+
+def _get_user_playlists(sp, limit: int = 50) -> list[dict]:
+    """Obtiene playlists del usuario manejando paginacion basica."""
+    playlists = []
+    results = sp.current_user_playlists(limit=limit)
+
+    while results:
+        playlists.extend(results.get("items", []))
+        if not results.get("next"):
+            break
+        results = sp.next(results)
+
+    return playlists
+
+
+def _resolve_playlist(sp, playlist_query: str) -> tuple[dict | None, str | None]:
+    """Resuelve una playlist por ID o por nombre entre las playlists del usuario."""
+    playlist_query = playlist_query.strip()
+    if not playlist_query:
+        return None, "Debes indicar el nombre o ID de la playlist."
+
+    try:
+        playlist = sp.playlist(
+            playlist_query,
+            fields="id,name,owner(display_name,id),tracks(total),external_urls",
+        )
+        if playlist.get("id"):
+            return playlist, None
+    except SpotifyException:
+        pass
+
+    normalized_query = _normalize_playlist_query(playlist_query)
+    playlists = _get_user_playlists(sp)
+    exact_matches = [
+        playlist
+        for playlist in playlists
+        if _normalize_playlist_query(playlist.get("name", "")) == normalized_query
+    ]
+
+    if len(exact_matches) == 1:
+        return exact_matches[0], None
+
+    if len(exact_matches) > 1:
+        options = "\n".join(
+            f"- {playlist.get('name', 'Playlist sin nombre')} (ID: {playlist.get('id', 'No disponible')})"
+            for playlist in exact_matches[:10]
+        )
+        return None, "Encontre varias playlists con ese nombre. Usa el ID de una de estas:\n" + options
+
+    partial_matches = [
+        playlist
+        for playlist in playlists
+        if normalized_query in _normalize_playlist_query(playlist.get("name", ""))
+    ]
+
+    if len(partial_matches) == 1:
+        return partial_matches[0], None
+
+    if len(partial_matches) > 1:
+        options = "\n".join(
+            f"- {playlist.get('name', 'Playlist sin nombre')} (ID: {playlist.get('id', 'No disponible')})"
+            for playlist in partial_matches[:10]
+        )
+        return None, "Encontre varias playlists parecidas. Usa el ID de una de estas:\n" + options
+
+    return None, f"No encontre una playlist llamada o identificada como: {playlist_query}"
+
+
+def _get_playlist_tracks(sp, playlist_id: str, limit: int = 100) -> tuple[list[dict], dict]:
+    """Lee tracks de una playlist ignorando items locales o no disponibles."""
+    tracks = []
+    stats = {
+        "api_total": 0,
+        "items_read": 0,
+        "skipped_without_track": 0,
+        "skipped_without_id": 0,
+    }
+    results = sp.playlist_items(
+        playlist_id,
+        limit=min(limit, 100),
+        fields="items(track(id,uri,name,artists(id,name),album(name),external_urls,popularity)),next,total",
+        additional_types=("track",),
+    )
+    stats["api_total"] = results.get("total", 0) if results else 0
+
+    while results and len(tracks) < limit:
+        for item in results.get("items", []):
+            stats["items_read"] += 1
+            track = item.get("track")
+            if not track:
+                stats["skipped_without_track"] += 1
+                continue
+            if not track.get("id") or not track.get("uri"):
+                stats["skipped_without_id"] += 1
+                continue
+            tracks.append(track)
+
+        if not results.get("next") or len(tracks) >= limit:
+            break
+        results = sp.next(results)
+
+    return tracks[:limit], stats
+
+
+def _track_key(track: dict) -> str:
+    """Clave estable para detectar canciones ya existentes y duplicados."""
+    name = _normalize_playlist_query(track.get("name", ""))
+    artists = ", ".join(
+        _normalize_playlist_query(artist.get("name", ""))
+        for artist in track.get("artists", [])
+    )
+    return f"{name}|{artists}"
+
+
+def _format_recommended_track(track: dict, reason: str) -> str:
+    """Formatea una recomendacion con un motivo breve."""
+    name = track.get("name", "Unknown track")
+    artists = ", ".join(artist.get("name", "Unknown artist") for artist in track.get("artists", []))
+    album = track.get("album", {}).get("name", "Unknown album")
+    popularity = track.get("popularity", "N/A")
+    url = track.get("external_urls", {}).get("spotify", "No URL")
+
+    return (
+        f"{name} - {artists}\n"
+        f"Album: {album}\n"
+        f"Popularidad: {popularity}\n"
+        f"Motivo: {reason}\n"
+        f"Spotify: {url}"
+    )
+
+
+@tool
+def spotify_recommend_from_playlist(
+    playlist_query: str = "",
+    recommendation_count: int = 3,
+    playlist_id: str = "",
+    playlist_name: str = "",
+    limit: int = 0,
+    mode: str = "",
+) -> str:
+    """Recommends Spotify songs based on the content of one of the user's playlists.
+
+    Use this tool when the user asks to:
+    - recommend songs based on a playlist
+    - analyze a playlist and suggest similar songs
+    - find songs that fit a playlist without adding them
+
+    Important usage rules:
+    - This tool only reads Spotify data and searches songs. It does not modify Spotify.
+    - Prefer playlist_query for the playlist ID or playlist name.
+    - playlist_id and playlist_name are accepted aliases for playlist_query.
+    - Prefer recommendation_count for the number of songs.
+    - limit is accepted as an alias for recommendation_count.
+    - mode is optional and currently only used as a hint in logs.
+    - recommendation_count must be an integer from 1 to 10. If the user asks for 3 songs, use 3.
+    - The tool avoids recommending songs already present in the playlist.
+    - This tool returns a complete formatted string, not a list or dictionary.
+    - Do not iterate over the returned result.
+    - After calling this tool, pass the returned text directly to final_answer.
+    - Correct usage example:
+      result = spotify_recommend_from_playlist(playlist_query="Electronica nocturna", recommendation_count=3)
+      final_answer(result)
+
+    Args:
+        playlist_query: Playlist name or Spotify playlist ID.
+        recommendation_count: Number of songs to recommend. Use an integer from 1 to 10.
+        playlist_id: Optional alias for playlist_query.
+        playlist_name: Optional alias for playlist_query.
+        limit: Optional alias for recommendation_count.
+        mode: Optional hint such as 'popular', currently not required.
+    """
+    if not playlist_query:
+        playlist_query = playlist_id or playlist_name
+
+    if limit:
+        recommendation_count = limit
+
+    logger.info(
+        "spotify_recommend_from_playlist llamada: playlist_query=%r, recommendation_count=%s, mode=%r",
+        playlist_query,
+        recommendation_count,
+        mode,
+    )
+
+    try:
+        sp = get_spotify_client()
+        recommendation_count = max(1, min(recommendation_count, 10))
+
+        playlist, error = _resolve_playlist(sp, playlist_query)
+        if error:
+            return error
+
+        playlist_id = playlist.get("id", "")
+        playlist_name = playlist.get("name", "Playlist sin nombre")
+        playlist_url = playlist.get("external_urls", {}).get("spotify", "No URL")
+        playlist_total = playlist.get("tracks", {}).get("total", "N/A")
+
+        tracks, track_stats = _get_playlist_tracks(sp, playlist_id, limit=100)
+        if not tracks:
+            return (
+                f"No encontre canciones disponibles en la playlist: {playlist_name}\n"
+                f"ID: {playlist_id}\n"
+                f"Spotify reporta tracks: {playlist_total}\n"
+                f"Items leidos por API: {track_stats['items_read']}\n"
+                f"Items sin track disponible: {track_stats['skipped_without_track']}\n"
+                f"Items sin ID/URI reproducible: {track_stats['skipped_without_id']}\n"
+                "Si Spotify reporta tracks pero todos salen sin ID/URI, normalmente son archivos locales, "
+                "canciones no disponibles o una playlist distinta a la esperada. Prueba usando el ID exacto de la playlist."
+            )
+
+        existing_ids = {track.get("id") for track in tracks if track.get("id")}
+        existing_keys = {_track_key(track) for track in tracks}
+
+        artist_counter = Counter(
+            artist.get("name", "")
+            for track in tracks
+            for artist in track.get("artists", [])
+            if artist.get("name")
+        )
+        album_counter = Counter(
+            track.get("album", {}).get("name", "")
+            for track in tracks
+            if track.get("album", {}).get("name")
+        )
+
+        top_artists = [artist for artist, _ in artist_counter.most_common(6)]
+        if not top_artists:
+            return f"No pude detectar artistas suficientes en la playlist: {playlist_name}"
+
+        search_queries = top_artists[:]
+        for track in tracks[:10]:
+            artists = track.get("artists", [])
+            if not artists:
+                continue
+            search_queries.append(artists[0].get("name", ""))
+
+        candidates = []
+        seen_candidate_ids = set()
+        seen_candidate_keys = set()
+
+        for query in search_queries:
+            if not query:
+                continue
+
+            results = sp.search(
+                q=query,
+                type="track",
+                limit=8,
+                market="MX",
+            )
+
+            for track in results.get("tracks", {}).get("items", []):
+                track_id = track.get("id")
+                track_key = _track_key(track)
+                if (
+                    not track_id
+                    or track_id in existing_ids
+                    or track_key in existing_keys
+                    or track_id in seen_candidate_ids
+                    or track_key in seen_candidate_keys
+                ):
+                    continue
+
+                candidate_artists = [artist.get("name", "") for artist in track.get("artists", [])]
+                shared_artists = [artist for artist in candidate_artists if artist in artist_counter]
+                score = int(track.get("popularity") or 0)
+                score += sum(artist_counter[artist] * 12 for artist in shared_artists)
+
+                reason = "encaja con artistas frecuentes de la playlist"
+                if shared_artists:
+                    reason = "comparte artista(s) clave: " + ", ".join(shared_artists[:2])
+
+                candidates.append((score, track, reason))
+                seen_candidate_ids.add(track_id)
+                seen_candidate_keys.add(track_key)
+
+        if not candidates:
+            return (
+                f"No encontre recomendaciones claras para la playlist '{playlist_name}'. "
+                "Prueba con una playlist con mas canciones o usa un playlist_id especifico."
+            )
+
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        selected = []
+        selected_artist_counts = Counter()
+
+        for score, track, reason in candidates:
+            main_artist = track.get("artists", [{}])[0].get("name", "")
+            if main_artist and selected_artist_counts[main_artist] >= 2:
+                continue
+            selected.append((score, track, reason))
+            if main_artist:
+                selected_artist_counts[main_artist] += 1
+            if len(selected) == recommendation_count:
+                break
+
+        if len(selected) < recommendation_count:
+            selected = candidates[:recommendation_count]
+
+        output = [
+            f"Recomendaciones basadas en tu playlist: {playlist_name}",
+            f"Playlist: {playlist_url}",
+            f"Canciones analizadas: {len(tracks)} de {playlist_total}",
+            "",
+            "Artistas mas representativos:",
+            "\n".join(f"- {artist}: {count}" for artist, count in artist_counter.most_common(5)),
+            "",
+            "Albumes mas repetidos:",
+            "\n".join(f"- {album}: {count}" for album, count in album_counter.most_common(5)) or "- No disponible",
+            "",
+            f"Canciones recomendadas ({len(selected)}):",
+        ]
+
+        for index, (_, track, reason) in enumerate(selected, start=1):
+            output.append(f"\n[{index}]\n{_format_recommended_track(track, reason)}")
+
+        if len(selected) < recommendation_count:
+            output.append(
+                f"\nSolo encontre {len(selected)} recomendacion(es) solidas sin repetir canciones existentes."
+            )
+
+        return "\n".join(output)
+
+    except RuntimeError as error:
+        logger.error("Error de configuracion en spotify_recommend_from_playlist: %s", error)
+        return f"Error de configuracion: {error}"
+    except SpotifyException as error:
+        logger.error("SpotifyException en spotify_recommend_from_playlist: %s", error, exc_info=True)
+        return _handle_spotify_error(error)
+    except Exception as error:
+        logger.error("Error inesperado en spotify_recommend_from_playlist: %s", error, exc_info=True)
+        return f"Ocurrio un error inesperado al recomendar canciones desde la playlist: {error}"
 
 
 def _format_added_track(track: dict) -> str:

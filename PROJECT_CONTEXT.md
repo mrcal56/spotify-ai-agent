@@ -83,6 +83,7 @@ Si se agregan o cambian scopes, normalmente hay que borrar `.spotify_cache` y vo
 ### Playlists
 
 - Listar playlists del usuario.
+- Recomendar canciones basadas en una playlist existente sin modificarla.
 - Crear playlist desde busquedas separadas por punto y coma.
 - Agregar canciones a una playlist existente desde busquedas.
 
@@ -115,7 +116,9 @@ Ejemplos de comandos directos:
 - `continua la musica`
 - `siguiente cancion`
 - `cancion anterior`
+- `lista mis playlists`
 - `lista mis dispositivos`
+- `revisa mi playlist Mix Rap y recomiendame 3 canciones`
 - `agrega FEIN a la cola`
 - `pon Bohemian Rhapsody despues`
 - `transfiere al device_id <ID>`
@@ -130,6 +133,7 @@ Si el router no detecta un comando simple, el flujo cae al agente en `agent.py`.
 - Las acciones que modifican Spotify requieren confirmaciones internas explicitas.
 - Crear playlist usa `SI_CREAR`.
 - Agregar canciones a playlist usa `SI_AGREGAR`.
+- Recomendar desde playlist solo lee datos y no requiere confirmacion.
 - Pausar usa `SI_PAUSAR`.
 - Reanudar usa `SI_REANUDAR`.
 - Siguiente cancion usa `SI_SIGUIENTE`.

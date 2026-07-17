@@ -100,6 +100,12 @@ busca 5 canciones de Bad Bunny
 lista mis playlists
 ```
 
+Este comando se resuelve con el router rapido de `main.py`, sin pasar por Ollama.
+
+```text
+revisa mi playlist Electronica nocturna y recomiendame 3 canciones
+```
+
 ```text
 muestrame mis ultimas 20 canciones escuchadas
 ```
@@ -125,6 +131,18 @@ salir
 ## Acciones Sobre Playlists
 
 El agente puede crear playlists o agregar canciones, pero esas acciones modifican tu cuenta de Spotify.
+
+Tambien puede recomendar canciones basandose en una playlist existente sin modificarla:
+
+Este caso se resuelve con el router rapido de `main.py`, sin pasar por Ollama.
+
+```text
+basado en mi playlist Electronica nocturna, recomiendame 3 canciones que no esten ahi
+```
+
+```text
+mira la playlist con ID <playlist_id> y recomiendame 5 canciones parecidas
+```
 
 Por seguridad, las tools internas requieren confirmaciones explicitas:
 

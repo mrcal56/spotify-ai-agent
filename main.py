@@ -21,9 +21,11 @@ from tools import (
     spotify_current_playback,
     spotify_dj_queue_similar_to_current,
     spotify_list_devices,
+    spotify_list_user_playlists,
     spotify_next_track,
     spotify_pause_playback,
     spotify_previous_track,
+    spotify_recommend_from_playlist,
     spotify_resume_playback,
     spotify_transfer_playback,
 )
@@ -32,6 +34,18 @@ logger = logging.getLogger(__name__)
 
 
 FAST_PLAYBACK_COMMANDS: tuple[tuple[tuple[str, ...], Callable[[], str]], ...] = (
+    (
+        (
+            "lista mis playlists",
+            "listar mis playlists",
+            "muestra mis playlists",
+            "ver mis playlists",
+            "que playlists tengo",
+            "cuales playlists tengo",
+            "mis playlists",
+        ),
+        lambda: spotify_list_user_playlists(limit=20),
+    ),
     (
         (
             "lista mis dispositivos",
@@ -133,6 +147,21 @@ DJ_DISCOVER_HINTS = (
     "nueva",
 )
 
+PLAYLIST_RECOMMENDATION_HINTS = (
+    "recomiendame",
+    "recomienda",
+    "recomendame",
+    "sugiere",
+    "sugerime",
+)
+
+PLAYLIST_REFERENCE_PATTERNS = (
+    r"\b(?:mi\s+)?playlist\s+(?:llamada\s+|con\s+id\s+|id\s+)?(.+?)\s+(?:y\s+)?(?:recomiendame|recomienda|recomendame|sugiere|sugerime)\b",
+    r"\bbasado\s+en\s+(?:mi\s+)?playlist\s+(.+?)\s*,?\s*(?:recomiendame|recomienda|recomendame|sugiere|sugerime)\b",
+    r"\bmira\s+(?:mi\s+)?playlist\s+(.+?)\s+(?:y\s+)?(?:recomiendame|recomienda|recomendame|sugiere|sugerime)\b",
+    r"\brevisa\s+(?:mi\s+)?playlist\s+(.+?)\s+(?:y\s+)?(?:recomiendame|recomienda|recomendame|sugiere|sugerime)\b",
+)
+
 
 def _normalize_text(text: str) -> str:
     """Normaliza texto del usuario para detectar comandos rápidos."""
@@ -191,9 +220,79 @@ def _detect_dj_mode(normalized_task: str) -> str | None:
     return "similar"
 
 
+def _extract_recommendation_count(normalized_task: str) -> int:
+    """Extrae cuantas canciones pidio el usuario para recomendar."""
+    match = re.search(r"\b(\d{1,2})\s+(?:cancion|canciones|temas|tracks)\b", normalized_task)
+    if not match:
+        return 3
+
+    return max(1, min(int(match.group(1)), 10))
+
+
+def _extract_playlist_recommendation(user_task: str) -> tuple[str, int, str] | None:
+    """Detecta recomendaciones basadas en playlist sin pasar por Ollama."""
+    normalized_task = _normalize_text(user_task)
+
+    if "playlist" not in normalized_task:
+        return None
+
+    if not any(hint in normalized_task for hint in PLAYLIST_RECOMMENDATION_HINTS):
+        return None
+
+    id_match = re.search(
+        r"\bplaylist\s+(?:con\s+id\s+|id\s+)([^\s,]+).*\b(?:recomiendame|recomienda|recomendame|sugiere|sugerime)\b",
+        user_task,
+        re.IGNORECASE,
+    )
+    if id_match:
+        playlist_query = id_match.group(1).strip(" ,.:;")
+        mode = "similar"
+        if any(hint in normalized_task for hint in DJ_POPULAR_HINTS):
+            mode = "popular"
+        elif any(hint in normalized_task for hint in DJ_DISCOVER_HINTS):
+            mode = "discover"
+
+        return playlist_query, _extract_recommendation_count(normalized_task), mode
+
+    for pattern in PLAYLIST_REFERENCE_PATTERNS:
+        match = re.search(pattern, normalized_task)
+        if not match:
+            continue
+
+        playlist_query = match.group(1).strip(" ,.:;")
+        if not playlist_query:
+            continue
+
+        mode = "similar"
+        if any(hint in normalized_task for hint in DJ_POPULAR_HINTS):
+            mode = "popular"
+        elif any(hint in normalized_task for hint in DJ_DISCOVER_HINTS):
+            mode = "discover"
+
+        return playlist_query, _extract_recommendation_count(normalized_task), mode
+
+    return None
+
+
 def try_fast_playback_command(user_task: str) -> str | None:
     """Ejecuta controles simples de Spotify sin pasar por el LLM."""
     normalized_task = _normalize_text(user_task)
+
+    playlist_recommendation = _extract_playlist_recommendation(user_task)
+    if playlist_recommendation:
+        playlist_query, recommendation_count, mode = playlist_recommendation
+        logger.info(
+            "Comando rapido de recomendacion por playlist detectado: %s (playlist=%r, count=%s, mode=%s)",
+            user_task,
+            playlist_query,
+            recommendation_count,
+            mode,
+        )
+        return spotify_recommend_from_playlist(
+            playlist_query=playlist_query,
+            recommendation_count=recommendation_count,
+            mode=mode,
+        )
 
     dj_mode = _detect_dj_mode(normalized_task)
     if dj_mode:

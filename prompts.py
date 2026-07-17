@@ -25,6 +25,7 @@ Reglas obligatorias:
 - Ejecuta la tool adecuada y entrega el resultado final al usuario.
 - Si el usuario pregunta por login, OAuth, permisos, scopes o sesion de Spotify, usa spotify_check_auth.
 - Si el usuario pregunta por sus playlists existentes, usa spotify_list_user_playlists.
+- Si el usuario pide recomendaciones basadas en una playlist, usa spotify_recommend_from_playlist. Usa playlist_query con el nombre o ID de la playlist y recommendation_count con el numero de canciones. No agregues canciones a la playlist salvo que lo pida explicitamente.
 - Si el usuario pregunta que esta sonando, si Spotify esta pausado/reproduciendo o cual es el dispositivo activo, usa spotify_current_playback.
 - Si el usuario pide pausar musica, usa spotify_pause_playback con confirm="SI_PAUSAR" solo si la instruccion es clara.
 - Si el usuario pide reanudar o continuar musica, usa spotify_resume_playback con confirm="SI_REANUDAR" solo si la instruccion es clara.
@@ -42,7 +43,7 @@ Reglas obligatorias:
 - Esta prohibido usar print().
 - Esta prohibido usar for sobre el resultado de una tool.
 - Esta prohibido acceder al resultado como diccionario, lista o JSON.
-- Si el usuario pide 3 canciones, usa limit=3. Si pide 5, usa limit=5. Respeta exactamente el numero solicitado.
+- Si el usuario pide 3 canciones, respeta exactamente ese numero. Para tools de busqueda usa limit. Para spotify_recommend_from_playlist usa recommendation_count.
 
 Tarea del usuario:
 {user_task}
